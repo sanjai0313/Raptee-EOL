@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RAPTEE HV | SERIAL MONITOR EOL</title>
+    <script type="text/javascript" src="http://127.0.0.1:8090/simple-jsonrpc-js.js"></script>
+    <script type="text/javascript" src="http://127.0.0.1:8090/freemaster-client.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0b0f1a; color: #e5e7eb; font-family: 'Inter', sans-serif; min-height: 100vh; display: flex; flex-direction: column; overflow-y: auto; }
+        .glass-card { background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255,255,255,0.05); backdrop-filter: blur(12px); }
+        .step-locked { opacity: 0.15; pointer-events: none; filter: grayscale(1); }
+        .status-indicator { width: 8px; height: 8px; border-radius: 50%; transition: all 0.3s ease; }
+        .bg-offline { background: #3f3f46; }
+        .bg-can-online { background: #10b981; box-shadow: 0 0 10px #10b981; }
+        .bg-pe-online { background: #3b82f6; box-shadow: 0 0 10px #3b82f6; }
+        #logs::-webkit-scrollbar { width: 4px; }
+        #logs::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-4 gap-4" onload="checkHardwareLoop()">
+
+    <div class="flex justify-between items-center glass-card p-3 px-6 rounded-xl border-emerald-500/20 shadow-2xl">
+        <div class="flex items-center gap-4">
+            <div>
+                <h1 class="text-lg font-black text-emerald-500 uppercase leading-none italic">Raptee HV</h1>
+                <span class="text-[7px] text-zinc-500 font-bold uppercase tracking-widest">EOL Station v2.3.0</span>
+            </div>
+            <div class="h-6 w-[1px] bg-zinc-800 mx-2"></div>
+            <div class="flex gap-4">
+                <div class="flex items-center gap-2"><div id="can_status_led" class="status-indicator bg-offline"></div><span class="text-[8px] font-bold text-zinc-400 uppercase">PEAK-CAN</span></div>
+                <div class="flex items-center gap-2"><div id="pe_status_led" class="status-indicator bg-offline"></div><span class="text-[8px] font-bold text-zinc-400 uppercase">PE MULTILINK</span></div>
+            </div>
+            <div class="flex gap-2 ml-4">
+                <input type="text" id="unique_id" placeholder="UNIQUE QR ID" class="bg-black/50 border border-zinc-700 focus:border-emerald-500 p-2 rounded-lg text-emerald-400 font-mono text-[10px] outline-none w-32">
+                <input type="text" id="trace_id" placeholder="MCU - ID NO." class="bg-black/50 border border-zinc-700 focus:border-emerald-500 p-2 rounded-lg text-white font-mono text-[10px] outline-none w-32">
+                <input type="text" id="tester_name" placeholder="TESTED BY" class="bg-black/50 border border-zinc-700 focus:border-emerald-500 p-2 rounded-lg text-amber-400 font-bold text-[10px] outline-none w-32 uppercase">
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <div id="save_controls" class="flex gap-2 step-locked">
+                <button id="btn_excel" onclick="saveAndLog('excel')" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-[10px] font-black uppercase shadow-lg">Save Excel</button>
+                <button id="btn_gallus" onclick="saveAndLog('gallus')" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase shadow-lg">Save to Gallus</button>
+            </div>
+            <button onclick="startPCM()" class="px-4 py-2 bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg text-[10px] font-black uppercase">Sync CAN</button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-6 gap-3 flex-1 min-h-0">
+        <div id="step_1" class="glass-card p-4 rounded-xl flex flex-col justify-between border-emerald-500/10">
+            <div class="flex justify-between items-center"><span class="text-2xl font-black text-zinc-800 italic">01</span><span class="text-[7px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded uppercase">Firmware</span></div>
+            <button onclick="prepareFlash('new_eol')" class="w-full bg-emerald-600 py-3 rounded-lg font-black text-[10px] uppercase">Start Flash</button>
+        </div>
+
+        <div id="card_fan" class="glass-card p-4 rounded-xl flex flex-col justify-between step-locked border-blue-500/10">
+            <div class="flex justify-between items-center"><span class="text-2xl font-black text-zinc-800 italic">02</span><span class="text-[7px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded uppercase">Fan Check</span></div>
+            <div class="text-center space-y-2">
+                <div class="text-4xl font-black text-blue-400 font-mono" id="rpm_val_live">0</div>
+                <div id="fan_timer" class="text-[8px] font-bold text-zinc-500 uppercase mt-1">IDLE</div>
+                <div class="flex flex-col gap-1 border-t border-white/5 pt-2 mt-2">
+                    <div class="flex justify-between items-center px-2">
+                        <span class="text-[7px] font-bold text-zinc-500 uppercase">Locked 20%:</span>
+                        <span id="lock_20_val" class="text-[10px] font-black text-emerald-400 font-mono">---</span>
+                    </div>
+                    <div class="flex justify-between items-center px-2">
+                        <span class="text-[7px] font-bold text-zinc-500 uppercase">Locked 80%:</span>
+                        <span id="lock_80_val" class="text-[10px] font-black text-emerald-400 font-mono">---</span>
+                    </div>
+                </div>
+            </div>
+            <button onclick="runFanSequence()" class="w-full bg-blue-600 py-3 rounded-lg font-black text-[10px] uppercase">Run Fan Test</button>
+        </div>
+
+        <div id="step_wave" class="glass-card p-4 rounded-xl flex flex-col justify-between step-locked border-emerald-500/10">
+            <div class="flex justify-between items-center"><span class="text-2xl font-black text-zinc-800 italic">03</span><span class="text-[7px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded uppercase">Waveforms</span></div>
+            <button onclick="testLog.wave='PASS'; log('SERIAL: PWM Waveform Confirmed by User'); document.getElementById('card_hv').classList.remove('step-locked');" class="w-full bg-zinc-700 py-3 rounded text-[9px] font-black uppercase">Confirm Wave</button>
+        </div>
+
+        <div id="card_hv" class="glass-card p-4 rounded-xl flex flex-col justify-between step-locked border-amber-500/10">
+            <div class="flex justify-between items-center"><span class="text-2xl font-black text-zinc-800 italic">04</span><span id="hv_badge" class="text-[7px] font-bold px-2 py-0.5 bg-amber-500/10 text-amber-500 rounded uppercase">HV Test</span></div>
+            <div class="text-center space-y-1">
+                <span class="text-[7px] font-bold text-zinc-500 uppercase block">Ref Voltage: 240</span>
+                <div id="v1_disp" class="text-2xl font-black text-white leading-none">0.00V</div>
+                <span class="text-[6px] text-zinc-500 uppercase">DC BUS [0x2644]</span>
+                <div id="v2_disp" class="text-xl font-black text-blue-400 leading-none">0.00V</div>
+                <span class="text-[6px] text-zinc-500 uppercase">MEAS [0x3098]</span>
+                <div id="offset_display" class="text-[9px] font-bold text-emerald-400 pt-1">OFF: 0.000V</div>
+            </div>
+            <button onclick="calculateHVOffset()" class="w-full bg-slate-800 py-3 rounded-lg font-black text-[10px] uppercase">Verify & Lock</button>
+        </div>
+
+        <div id="card_prod_flash" class="glass-card p-4 rounded-xl flex flex-col justify-between step-locked border-blue-500/10">
+            <div class="flex justify-between items-center"><span class="text-2xl font-black text-zinc-800 italic">05</span><span class="text-[7px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded uppercase">Production</span></div>
+            <button onclick="prepareFlash('bike')" class="w-full bg-blue-600 py-3 rounded-lg font-black text-[10px] uppercase">Flash Bike Code</button>
+        </div>
+
+        <div id="card_throttle" class="glass-card p-4 rounded-xl flex flex-col justify-between step-locked border-purple-500/10">
+            <div class="flex justify-between items-center">
+                <span class="text-2xl font-black text-zinc-800 italic">06</span>
+                <span class="text-[7px] font-bold px-2 py-0.5 bg-purple-500/10 text-purple-500 rounded uppercase">Throttle Check</span>
+            </div>
+            <div class="text-center space-y-2">
+                <div id="throttle_val" class="text-4xl font-black text-purple-400 font-mono">0</div>
+                <div class="flex flex-col gap-1 border-t border-white/5 pt-2 mt-2">
+                    <div class="flex justify-between items-center px-2">
+                        <span class="text-[7px] font-bold text-zinc-500 uppercase">Throttle Min:</span>
+                        <span id="throt_min_val" class="text-[10px] font-black text-purple-400 font-mono">---</span>
+                    </div>
+                    <div class="flex justify-between items-center px-2">
+                        <span class="text-[7px] font-bold text-zinc-500 uppercase">Throttle Max:</span>
+                        <span id="throt_max_val" class="text-[10px] font-black text-purple-400 font-mono">---</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col gap-2">
+                <button id="lock_throt_btn" onclick="verifyThrottle()" class="w-full bg-purple-600/20 text-purple-400 border border-purple-500/30 py-2 rounded text-[9px] font-black uppercase">Lock Throttle</button>
+                <button onclick="resetThrottleTest()" class="w-full bg-zinc-800/50 text-zinc-500 border border-zinc-700/30 py-1.5 rounded text-[8px] font-bold uppercase hover:bg-red-900/20 hover:text-red-400 hover:border-red-500/20 transition-all">Reset Step 06</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-card p-4 rounded-xl flex flex-col border-zinc-800 h-48">
+        <div class="flex justify-between mb-2"><span class="text-[8px] font-bold text-emerald-500 uppercase italic tracking-widest">System Serial Monitor</span></div>
+        <div id="logs" class="flex-1 overflow-y-auto font-mono text-[9px] space-y-1 text-zinc-400 scroll-smooth pr-1"></div>
+    </div>
+
+    <script>
+        let pcm;
+        let excelSaved = false;
+        let gallusSaved = false;
+        let throttleState = 0; 
+
+        let testLog = { 
+            wave: "FAIL", fan: "FAIL", 
+            fan_20_rpm: "0", fan_80_rpm: "0", 
+            hv: "FAIL", offset: "0.0V", 
+            throt_min: "0", throt_max: "0",
+            throttle_status: "FAIL" 
+        };
+
+        const ADDR = { 
+            DC_BUS: "0x20002644",
+            MEAS_BOARD: "0x20003098",
+            FD: "0x20002A44", 
+            FR: "0x20002CF4",
+            THROTTLE: "0x20002590" 
+        };
+
+        function log(m, color="text-emerald-500") {
+            const l = document.getElementById('logs');
+            const time = new Date().toLocaleTimeString([], { hour12: false });
+            l.innerHTML += `<div><span class="text-zinc-600">[${time}]</span> <span class="${color}">>></span> ${m}</div>`;
+            l.scrollTop = l.scrollHeight;
+        }
+
+        async function checkHardwareLoop() {
+            setInterval(async () => {
+                try {
+                    const r = await fetch('http://127.0.0.1:5000/check_pe');
+                    const status = await r.json();
+                    document.getElementById('pe_status_led').className = (status.connected) ? "status-indicator bg-pe-online" : "status-indicator bg-offline";
+                    const canOk = pcm && pcm.IsCommStarted();
+                    document.getElementById('can_status_led').className = `status-indicator ${canOk ? 'bg-can-online' : 'bg-offline'}`;
+                } catch(e) { 
+                    document.getElementById('pe_status_led').className = "status-indicator bg-offline";
+                }
+            }, 2000);
+        }
+
+        async function prepareFlash(type) {
+            const path = (type === 'new_eol') ? "F:/MC_FLASH_FILES/NewEoL.elf" : "F:/MC_FLASH_FILES/a605_Production_code.elf";
+            log(`SERIAL: Initiating GDB flash sequence for ${type.toUpperCase()}`);
+            
+            try {
+                const r = await fetch('http://127.0.0.1:5000/flash', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: "flash", file_path: path }) });
+                const res = await r.json();
+                if(res.status === "success") {
+                    log(`SERIAL: Flash Complete. Target: ${type === 'new_eol' ? 'NewEoL.elf' : 'Production Code' }`, "text-blue-400");
+                    if(type === 'new_eol') { document.getElementById('card_fan').classList.remove('step-locked'); startPCM(); }
+                    else { document.getElementById('card_throttle').classList.remove('step-locked'); }
+                } else {
+                    log(`SERIAL ERROR: GDB Load Failure`, "text-red-500");
+                }
+            } catch(e) { log("SERIAL ERROR: Connection to Server.py lost", "text-red-500"); }
+        }
+
+        function startPCM() {
+            pcm = new PCM('127.0.0.1:8090', async () => {
+                try {
+                    await pcm.DefineVariable({ name: "DC_BUS", addr: ADDR.DC_BUS, type: "float", size: 4 });
+                    await pcm.DefineVariable({ name: "MEAS_BOARD", addr: ADDR.MEAS_BOARD, type: "float", size: 4 });
+                    await pcm.DefineVariable({ name: "FD", addr: ADDR.FD, type: "float", size: 4 });
+                    await pcm.DefineVariable({ name: "FR", addr: ADDR.FR, type: "float", size: 4 });
+                    await pcm.DefineVariable({ name: "Throttle", addr: ADDR.THROTTLE, type: "uint", size: 4 });
+                    await pcm.StartComm("CAN;drv=peak;port=1;bitrate=1000000;cmdid=0x7aa;rspid=0x7aa;tmo=500");
+                    log("SERIAL: CAN Protocol Synchronized at 1Mbps");
+                    setInterval(async () => {
+                        const rBus = await pcm.ReadVariable("DC_BUS");
+                        if(rBus) document.getElementById('v1_disp').innerText = parseFloat(rBus.data).toFixed(2) + "V";
+                        const rMeas = await pcm.ReadVariable("MEAS_BOARD");
+                        if(rMeas) document.getElementById('v2_disp').innerText = parseFloat(rMeas.data).toFixed(2) + "V";
+                        const rRpm = await pcm.ReadVariable("FR");
+                        if(rRpm) document.getElementById('rpm_val_live').innerText = Math.round(rRpm.data);
+                        const rThr = await pcm.ReadVariable("Throttle");
+                        if(rThr) document.getElementById('throttle_val').innerText = Math.round(rThr.data);
+                    }, 400);
+                } catch(e) { log("SERIAL ERROR: FreeMASTER Lite Handshake Failed", "text-red-500"); }
+            });
+        }
+
+        async function runFanSequence() {
+            log("SERIAL: Starting 20s Fan RPM Modulation Test...");
+            const stages = [
+                { duty: 0.2, label: '20%', display: 'lock_20_val', key: 'fan_20_rpm' }, 
+                { duty: 0.8, label: '80%', display: 'lock_80_val', key: 'fan_80_rpm' }
+            ];
+            
+            try {
+                for (let s of stages) {
+                    log(`SERIAL: Applying ${s.label} Duty (${s.duty}) to Address ${ADDR.FD}`);
+                    await pcm.WriteVariable("FD", s.duty);
+                    for (let i = 10; i > 0; i--) {
+                        document.getElementById('fan_timer').innerText = `${s.label} TEST: ${i}s`;
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                    let capturedRpm = document.getElementById('rpm_val_live').innerText;
+                    testLog[s.key] = capturedRpm;
+                    document.getElementById(s.display).innerText = capturedRpm + " RPM";
+                    log(`SERIAL: LOCKED ${s.label} RPM: ${capturedRpm}`, "text-blue-400");
+                }
+                await pcm.WriteVariable("FD", 0);
+                testLog.fan = "PASS";
+                log("SERIAL: Fan Test Sequence Finished [PASS]", "text-emerald-500");
+                document.getElementById('fan_timer').innerText = "IDLE";
+                document.getElementById('step_wave').classList.remove('step-locked');
+            } catch (e) { log("SERIAL ERROR: Fan Control Failed", "text-red-500"); }
+        }
+
+        function calculateHVOffset() {
+            const mcReading = parseFloat(document.getElementById('v1_disp').innerText); 
+            const referenceVoltage = 240.0;
+            const offsetValue = mcReading - referenceVoltage;
+            
+            document.getElementById('offset_display').innerText = `OFF: ${offsetValue.toFixed(3)}V`;
+            testLog.offset = offsetValue.toFixed(3);
+            
+            if (offsetValue >= -4.0 && offsetValue <= 4.0) {
+                testLog.hv = "PASS";
+                document.getElementById('hv_badge').className = "text-[7px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded uppercase";
+                log(`SERIAL: HV Test PASS. Offset: ${testLog.offset}V`);
+            } else {
+                testLog.hv = "FAIL";
+                document.getElementById('hv_badge').className = "text-[7px] font-bold px-2 py-0.5 bg-red-500/10 text-red-500 rounded uppercase";
+                log(`SERIAL: HV Test FAIL. Offset: ${testLog.offset}V is outside +/-4V range`, "text-red-500");
+            }
+            
+            document.getElementById('hv_badge').innerText = testLog.hv;
+            document.getElementById('card_prod_flash').classList.remove('step-locked');
+        }
+
+        function verifyThrottle() {
+            let currentVal = document.getElementById('throttle_val').innerText;
+            if(throttleState === 0) {
+                testLog.throt_min = currentVal;
+                document.getElementById('throt_min_val').innerText = currentVal;
+                log(`SERIAL: LOCKED Throttle Min: ${currentVal}`, "text-purple-400");
+                document.getElementById('lock_throt_btn').innerText = "Lock Max Throttle";
+                throttleState = 1;
+            } else {
+                testLog.throt_max = currentVal;
+                document.getElementById('throt_max_val').innerText = currentVal;
+                log(`SERIAL: LOCKED Throttle Max: ${currentVal}`, "text-purple-400");
+                testLog.throttle_status = "PASS";
+                log("SERIAL: Throttle Mapping Verification Complete [PASS]");
+                document.getElementById('save_controls').classList.remove('step-locked');
+                document.getElementById('lock_throt_btn').innerText = "Locked";
+                document.getElementById('lock_throt_btn').disabled = true;
+                document.getElementById('lock_throt_btn').className = "w-full bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 py-2 rounded text-[9px] font-black uppercase";
+            }
+        }
+
+        // NEW RESET FUNCTION FOR THROTTLE STEP
+        function resetThrottleTest() {
+            throttleState = 0;
+            testLog.throt_min = "0";
+            testLog.throt_max = "0";
+            testLog.throttle_status = "FAIL";
+            
+            document.getElementById('throt_min_val').innerText = "---";
+            document.getElementById('throt_max_val').innerText = "---";
+            
+            const btn = document.getElementById('lock_throt_btn');
+            btn.innerText = "Lock Throttle";
+            btn.disabled = false;
+            btn.className = "w-full bg-purple-600/20 text-purple-400 border border-purple-500/30 py-2 rounded text-[9px] font-black uppercase";
+            
+            document.getElementById('save_controls').classList.add('step-locked');
+            log("SERIAL: Throttle check reset. You can re-test Step 06.", "text-amber-500 italic");
+        }
+
+        async function saveAndLog(destination) {
+            const qr = document.getElementById('unique_id').value;
+            const tester = document.getElementById('tester_name').value;
+            if(!qr || !tester) { log("SERIAL ERROR: QR ID and Tester Name are required!", "text-red-500"); return; }
+            
+            const endpoint = (destination === 'excel') ? '/log_excel' : '/log_gallus';
+            log(`SERIAL: Sending payload to ${destination.toUpperCase()}...`);
+            
+            const payload = { 
+                mode: (destination === 'gallus' ? "online" : "offline"), 
+                ...testLog, 
+                unique_id: qr, 
+                trace_id: document.getElementById('trace_id').value, 
+                tester: tester 
+            };
+
+            try {
+                const r = await fetch(`http://127.0.0.1:5000${endpoint}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                const res = await r.json();
+                
+                if(res.status === "success") {
+                    log(`SERIAL: ${res.message.toUpperCase()}`, "text-emerald-400");
+                    
+                    if(destination === 'excel') {
+                        excelSaved = true;
+                        document.getElementById('btn_excel').innerText = "EXCEL OK";
+                        document.getElementById('btn_excel').classList.replace('bg-zinc-700', 'bg-emerald-900');
+                    }
+                    if(destination === 'gallus') {
+                        gallusSaved = true;
+                        document.getElementById('btn_gallus').innerText = "GALLUS OK";
+                    }
+
+                    checkResetGate();
+                } else { 
+                    log(`SERIAL ERROR: ${res.message}`, "text-red-500"); 
+                }
+            } catch(e) { log(`SERIAL ERROR: Connection to server failed`, "text-red-500"); }
+        }
+
+        function checkResetGate() {
+            if (excelSaved && gallusSaved) {
+                log("SERIAL: ALL DATA SAVED. Station ready to reset.", "text-white font-bold");
+                
+                const gBtn = document.getElementById('btn_gallus');
+                gBtn.innerText = "COMPLETE & RESET";
+                gBtn.className = "px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-black uppercase shadow-lg animate-pulse";
+                
+                gBtn.onclick = () => {
+                    if(confirm("Confirm: Reload page for next unit?")) {
+                        location.reload();
+                    }
+                };
+
+                alert("SUCCESS: Data synced to Excel and Zoho.\nClick 'COMPLETE & RESET' to start next unit.");
+            }
+        }
+    </script>
+</body>
+</html>
